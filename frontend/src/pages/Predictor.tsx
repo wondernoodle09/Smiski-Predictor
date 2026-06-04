@@ -186,8 +186,8 @@ function Predictor() {
                                     )
                                 }
                             >
-                                <option value={0}>0 — none</option>
-                                <option value={1}>1 — soft</option>
+                                <option value={0}>0 — soft</option>
+                                <option value={1}>1 — mixed</option>
                                 <option value={2}>2 — hard</option>
                             </select>
                         </label>
