@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getCollections, type Collection } from "../api/collections";
 
 type ShakePosition = "up_down" | "base_rotation" | "rotation_1" | "rotation_2";
@@ -15,6 +15,14 @@ type PredictionInput = {
     collection_id: string;
 };
 
+type RankedResult = {
+    name: string;
+    distance: number;
+    profile: Record<string, unknown>;
+};
+
+type MorphologyProfile = Record<string, unknown>;
+
 const initialShakeReport: ShakeReport = {
     movement_amount: 0,
     loudness: 0,
@@ -28,26 +36,69 @@ const shakePositions: { key: ShakePosition; label: string }[] = [
     { key: "rotation_2", label: "Rotation 2" },
 ];
 
-function Predictor() {
+const morphologyLabels: Record<string, string> = {
+    is_symmetrical: "Symmetrical",
+    smiski_size: "Size",
+    total_prop_number: "Number of Props",
+    largest_prop_size: "Largest Prop Size",
+    multi_body: "Multi-body",
+    elongation_profile: "Elongation",
+    compactness: "Compactness",
+};
 
+function hasAnyInput(formData: PredictionInput): boolean {
+    if (formData.weight !== "") return true;
+    for (const pos of Object.values(formData.shake_reports)) {
+        if (
+            pos.movement_amount !== 0 ||
+            pos.loudness !== 0 ||
+            pos.sound_type !== 0
+        )
+            return true;
+    }
+    return false;
+}
+
+function RankedResults({ results }: { results: RankedResult[] }) {
+    return (
+        <div>
+            <h3>Most Likely Smiski</h3>
+            {results.map((r, i) => (
+                <div key={r.name} style={{ marginBottom: 12 }}>
+                    <strong>
+                        #{i + 1} {r.name}
+                    </strong>
+                    <span style={{ marginLeft: 8, color: "#888", fontSize: 14 }}>
+                        distance: {r.distance}
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function MorphologyResult({ profile }: { profile: MorphologyProfile }) {
+    return (
+        <div>
+            <h3>Predicted Morphology</h3>
+            {Object.entries(profile).map(([key, val]) => (
+                <div key={key} style={{ marginBottom: 6 }}>
+                    <span style={{ fontWeight: 500 }}>
+                        {morphologyLabels[key] ?? key}:
+                    </span>{" "}
+                    <span>{val === null ? "N/A" : String(val)}</span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function Predictor() {
     const [collections, setCollections] = useState<Collection[]>([]);
     const [collectionError, setCollectionError] = useState("");
-
-    useEffect(() => {
-        getCollections()
-            .then(setCollections)
-            .catch((err: unknown) => {
-                if (err instanceof Error) setCollectionError(err.message);
-                else setCollectionError("Failed to load collections");
-            });
-    }, []);
-
-    function updateCollection(value: string) {
-        setFormData((prev) => ({
-            ...prev,
-            collection_id: value,
-        }));
-    }
+    const [rankedResults, setRankedResults] = useState<RankedResult[] | null>(null);
+    const [morphologyResult, setMorphologyResult] = useState<MorphologyProfile | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     const [formData, setFormData] = useState<PredictionInput>({
         collection_id: "",
@@ -60,13 +111,83 @@ function Predictor() {
         },
     });
 
-    const [prediction, setPrediction] = useState<string>("");
+    useEffect(() => {
+        getCollections()
+            .then(setCollections)
+            .catch((err: unknown) => {
+                if (err instanceof Error) setCollectionError(err.message);
+                else setCollectionError("Failed to load collections");
+            });
+    }, []);
+
+    const fetchPrediction = useCallback(async (data: PredictionInput) => {
+        if (!hasAnyInput(data)) {
+            setRankedResults(null);
+            setMorphologyResult(null);
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const shake_reports: Record<string, object> = {};
+            const positionMap: Record<ShakePosition, string> = {
+                up_down: "up_down",
+                base_rotation: "base_rotation",
+                rotation_1: "rotated_1",
+                rotation_2: "rotated_2",
+            };
+
+            for (const [key, apiKey] of Object.entries(positionMap)) {
+                const pos = data.shake_reports[key as ShakePosition];
+                shake_reports[apiKey] = {
+                    movement_amount: pos.movement_amount,
+                    loudness: pos.loudness,
+                    sound_hardness: pos.sound_type,
+                };
+            }
+
+            const response = await fetch("http://127.0.0.1:8000/predict", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    weight: data.weight !== "" ? parseFloat(data.weight) : null,
+                    collection_id: data.collection_id
+                        ? parseInt(data.collection_id)
+                        : null,
+                    shake_reports,
+                }),
+            });
+
+            const result = await response.json();
+
+            if (data.collection_id) {
+                setRankedResults(result.results);
+                setMorphologyResult(null);
+            } else {
+                setMorphologyResult(result.results[0]?.profile ?? null);
+                setRankedResults(null);
+            }
+        } catch (err) {
+            console.error("Prediction error:", err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    // debounce: wait 500ms after last change before firing
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            fetchPrediction(formData);
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [formData, fetchPrediction]);
+
+    function updateCollection(value: string) {
+        setFormData((prev) => ({ ...prev, collection_id: value }));
+    }
 
     function updateWeight(value: string) {
-        setFormData((prev) => ({
-            ...prev,
-            weight: value,
-        }));
+        setFormData((prev) => ({ ...prev, weight: value }));
     }
 
     function updateShakeReport(
@@ -86,51 +207,12 @@ function Predictor() {
         }));
     }
 
-    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-        e.preventDefault();
-
-        const response = await fetch("http://127.0.0.1:8000/predict", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                weight: parseFloat(formData.weight),
-                collection_id: formData.collection_id ? parseInt(formData.collection_id) : null,
-                shake_reports: {
-                    up_down: {
-                        movement_amount: formData.shake_reports.up_down.movement_amount,
-                        loudness: formData.shake_reports.up_down.loudness,
-                        sound_hardness: formData.shake_reports.up_down.sound_type,
-                    },
-                    base_rotation: {
-                        movement_amount: formData.shake_reports.base_rotation.movement_amount,
-                        loudness: formData.shake_reports.base_rotation.loudness,
-                        sound_hardness: formData.shake_reports.base_rotation.sound_type,
-                    },
-                    rotated_1: {
-                        movement_amount: formData.shake_reports.rotation_1.movement_amount,
-                        loudness: formData.shake_reports.rotation_1.loudness,
-                        sound_hardness: formData.shake_reports.rotation_1.sound_type,
-                    },
-                    rotated_2: {
-                        movement_amount: formData.shake_reports.rotation_2.movement_amount,
-                        loudness: formData.shake_reports.rotation_2.loudness,
-                        sound_hardness: formData.shake_reports.rotation_2.sound_type,
-                    },
-                },
-            }),
-        });
-
-        const data = await response.json();
-        setPrediction(JSON.stringify(data.results, null, 2));
-    }
-
     return (
         <section className="card">
             <h2>Predict Your Smiski</h2>
             <p>Enter as much information as you can to accurately predict your Smiski.</p>
 
-            <form onSubmit={handleSubmit} className="predictor-form">
-
+            <div className="predictor-form">
                 <label>
                     Select Collection:
                     <select
@@ -138,7 +220,6 @@ function Predictor() {
                         onChange={(e) => updateCollection(e.target.value)}
                     >
                         <option value="">Unknown / no collection selected</option>
-
                         {collections.map((collection) => (
                             <option key={collection.id} value={collection.id}>
                                 {collection.name}
@@ -169,11 +250,7 @@ function Predictor() {
                             <select
                                 value={formData.shake_reports[position.key].movement_amount}
                                 onChange={(e) =>
-                                    updateShakeReport(
-                                        position.key,
-                                        "movement_amount",
-                                        Number(e.target.value)
-                                    )
+                                    updateShakeReport(position.key, "movement_amount", Number(e.target.value))
                                 }
                             >
                                 <option value={0}>0 — none</option>
@@ -188,11 +265,7 @@ function Predictor() {
                             <select
                                 value={formData.shake_reports[position.key].loudness}
                                 onChange={(e) =>
-                                    updateShakeReport(
-                                        position.key,
-                                        "loudness",
-                                        Number(e.target.value)
-                                    )
+                                    updateShakeReport(position.key, "loudness", Number(e.target.value))
                                 }
                             >
                                 <option value={0}>0 — none</option>
@@ -207,11 +280,7 @@ function Predictor() {
                             <select
                                 value={formData.shake_reports[position.key].sound_type}
                                 onChange={(e) =>
-                                    updateShakeReport(
-                                        position.key,
-                                        "sound_type",
-                                        Number(e.target.value)
-                                    )
+                                    updateShakeReport(position.key, "sound_type", Number(e.target.value))
                                 }
                             >
                                 <option value={0}>0 — soft</option>
@@ -221,14 +290,14 @@ function Predictor() {
                         </label>
                     </fieldset>
                 ))}
+            </div>
 
-                <button type="submit">Get Prediction</button>
-            </form>
+            {isLoading && <p style={{ marginTop: 24 }}>Predicting...</p>}
 
-            {prediction && (
+            {!isLoading && (rankedResults || morphologyResult) && (
                 <div className="prediction-result">
-                    <h3>Prediction</h3>
-                    <p>{prediction}</p>
+                    {rankedResults && <RankedResults results={rankedResults} />}
+                    {morphologyResult && <MorphologyResult profile={morphologyResult} />}
                 </div>
             )}
         </section>

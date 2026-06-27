@@ -14,23 +14,37 @@ encoders = bundle["encoders"]
 bool_cols = bundle["bool_cols"]
 
 
-def build_features(weight: float, shake_reports: dict) -> pd.DataFrame:
+def build_features(weight: float | None, shake_reports: dict) -> pd.DataFrame:
     rotation_positions = ["base_rotation", "rotated_1", "rotated_2", "up_down"]
     metrics = ["movement_amount", "loudness", "sound_hardness"]
 
-    row = {"weight": weight}
+    row = {"weight": weight if weight is not None else np.nan}
 
     for metric in metrics:
-        vals = [shake_reports[pos][metric] for pos in rotation_positions]
+        vals = []
+        for pos in rotation_positions:
+            if pos in shake_reports and shake_reports[pos] is not None:
+                vals.append(float(shake_reports[pos][metric]))
+            else:
+                vals.append(np.nan)
+
         vals_series = pd.Series(vals, dtype=float)
         row[f"mean_{metric}"] = vals_series.mean()
         row[f"variance_{metric}"] = vals_series.var()
         row[f"range_{metric}"] = vals_series.max() - vals_series.min()
-        rotation_mean = pd.Series([shake_reports[pos][metric] for pos in rotation_positions[:3]], dtype=float).mean()
-        row[f"updown_vs_rotation_{metric}"] = shake_reports["up_down"][metric] - rotation_mean
+
+        rotation_vals = pd.Series(vals[:3], dtype=float)
+        rotation_mean = rotation_vals.mean()
+        up_down_val = vals[3]
+        row[f"updown_vs_rotation_{metric}"] = (
+            up_down_val - rotation_mean
+            if not np.isnan(up_down_val) and not np.isnan(rotation_mean)
+            else np.nan
+        )
 
     df = pd.DataFrame([row])[feature_cols]
     df = df.fillna(df.median())
+    df = df.fillna(0)
     return df
 
 

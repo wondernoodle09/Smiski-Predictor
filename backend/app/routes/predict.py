@@ -7,15 +7,14 @@ router = APIRouter()
 
 
 class ShakeReport(BaseModel):
-    movement_amount: int
-    loudness: int
-    sound_hardness: int
-
+    movement_amount: int = 0
+    loudness: int = 0
+    sound_hardness: int = 0
 
 class PredictionRequest(BaseModel):
-    weight: float
+    weight: float | None = None
     collection_id: int | None = None
-    shake_reports: dict[str, ShakeReport]
+    shake_reports: dict[str, ShakeReport] = {}
 
 
 @router.post("/predict")
