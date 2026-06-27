@@ -86,14 +86,42 @@ function Predictor() {
         }));
     }
 
-    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
 
-        console.log("Prediction input:", formData);
+        const response = await fetch("http://127.0.0.1:8000/predict", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                weight: parseFloat(formData.weight),
+                collection_id: formData.collection_id ? parseInt(formData.collection_id) : null,
+                shake_reports: {
+                    up_down: {
+                        movement_amount: formData.shake_reports.up_down.movement_amount,
+                        loudness: formData.shake_reports.up_down.loudness,
+                        sound_hardness: formData.shake_reports.up_down.sound_type,
+                    },
+                    base_rotation: {
+                        movement_amount: formData.shake_reports.base_rotation.movement_amount,
+                        loudness: formData.shake_reports.base_rotation.loudness,
+                        sound_hardness: formData.shake_reports.base_rotation.sound_type,
+                    },
+                    rotated_1: {
+                        movement_amount: formData.shake_reports.rotation_1.movement_amount,
+                        loudness: formData.shake_reports.rotation_1.loudness,
+                        sound_hardness: formData.shake_reports.rotation_1.sound_type,
+                    },
+                    rotated_2: {
+                        movement_amount: formData.shake_reports.rotation_2.movement_amount,
+                        loudness: formData.shake_reports.rotation_2.loudness,
+                        sound_hardness: formData.shake_reports.rotation_2.sound_type,
+                    },
+                },
+            }),
+        });
 
-        setPrediction(
-            "Dummy result: likely compact, low elongation, not multi-body."
-        );
+        const data = await response.json();
+        setPrediction(JSON.stringify(data.results, null, 2));
     }
 
     return (
